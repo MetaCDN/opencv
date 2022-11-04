@@ -59,6 +59,8 @@ DECLARE_CV_PAUSE
 // https://github.com/riscv/riscv-isa-manual/issues/43
 // #   define CV_PAUSE(v) do { for (int __delay = (v); __delay > 0; --__delay) { asm volatile("pause"); } } while (0)
 #   define CV_PAUSE(v) do { for (int __delay = (v); __delay > 0; --__delay) { asm volatile("nop"); } } while (0)
+# elif defined __GNUC__ && defined __loongarch__
+#   define CV_PAUSE(v) do { for (int __delay = (v); __delay > 0; --__delay) { asm volatile("nop"); } } while (0)
 # else
 #   warning "Can't detect 'pause' (CPU-yield) instruction on the target platform. Specify CV_PAUSE() definition via compiler flags."
 #   define CV_PAUSE(...) do { /* no-op: works, but not effective */ } while (0)
@@ -580,6 +582,11 @@ void ThreadPool::run(const Range& range, const ParallelLoopBody& body, double ns
             {
                 WorkerThread& thread = *(threads[i].get());
                 if (
+#if defined(__clang__) && defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+                        1 ||  // Robust workaround to avoid data race warning of `thread.job`
+#endif
+#endif
 #if !defined(CV_USE_GLOBAL_WORKERS_COND_VAR)
                         thread.isActive ||
 #endif

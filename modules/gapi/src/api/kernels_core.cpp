@@ -301,16 +301,6 @@ GMat merge4(const GMat& src1, const GMat& src2, const GMat& src3, const GMat& sr
     return core::GMerge4::on(src1, src2, src3, src4);
 }
 
-GMat resize(const GMat& src, const Size& dsize, double fx, double fy, int interpolation)
-{
-    return core::GResize::on(src, dsize, fx, fy, interpolation);
-}
-
-GMatP resizeP(const GMatP& src, const Size& dsize, int interpolation)
-{
-    return core::GResizeP::on(src, dsize, interpolation);
-}
-
 GMat remap(const GMat& src, const Mat& map1, const Mat& map2,
            int interpolation, int borderMode,
            const Scalar& borderValue)
@@ -415,6 +405,12 @@ std::tuple<GOpaque<double>,GArray<int>,GArray<Point3f>> kmeans(const GArray<Poin
                                                                const KmeansFlags      flags)
 {
     return core::GKMeans3D::on(data, K, bestLabels, criteria, attempts, flags);
+}
+
+
+GMat transpose(const GMat& src)
+{
+    return core::GTranspose::on(src);
 }
 
 GOpaque<Size> streaming::size(const GMat& src)

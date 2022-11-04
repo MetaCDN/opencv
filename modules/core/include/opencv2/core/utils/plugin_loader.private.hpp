@@ -80,7 +80,9 @@ LibHandle_t libraryLoad_(const FileSystemPath_t& filename)
     return LoadLibraryW(filename.c_str());
 #endif
 #elif defined(__linux__) || defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__HAIKU__) || defined(__GLIBC__)
-    return dlopen(filename.c_str(), RTLD_NOW);
+    void* handle = dlopen(filename.c_str(), RTLD_NOW);
+    CV_LOG_IF_DEBUG(NULL, !handle, "dlopen() error: " << dlerror());
+    return handle;
 #endif
 }
 
@@ -145,7 +147,7 @@ public:
         return handle != NULL;
     }
     void* getSymbol(const char* symbolName) const;
-    const std::string getName() const;
+    std::string getName() const;
 private:
     void libraryLoad(const FileSystemPath_t& filename);
     void libraryRelease();

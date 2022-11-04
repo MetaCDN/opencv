@@ -40,7 +40,7 @@
 //M*/
 
 #include "precomp.hpp"
-#include "opencv2/core/opencl/runtime/opencl_clamdfft.hpp"
+#include "opencv2/core/opencl/runtime/opencl_clfft.hpp"
 #include "opencv2/core/opencl/runtime/opencl_core.hpp"
 #include "opencl_kernels_core.hpp"
 #include <map>
@@ -238,7 +238,7 @@ DFTInit( int n0, int nf, const int* factors, int* itab, int elem_size, void* _wa
     else
     {
         // radix[] is initialized from index 'nf' down to zero
-        assert (nf < 34);
+        CV_Assert (nf < 34);
         radix[nf] = 1;
         digits[nf] = 0;
         for( i = 0; i < nf; i++ )
@@ -374,7 +374,7 @@ DFTInit( int n0, int nf, const int* factors, int* itab, int elem_size, void* _wa
     else
     {
         Complex<float>* wave = (Complex<float>*)_wave;
-        assert( elem_size == sizeof(Complex<float>) );
+        CV_Assert( elem_size == sizeof(Complex<float>) );
 
         wave[0].re = 1.f;
         wave[0].im = 0.f;
@@ -874,13 +874,13 @@ DFT(const OcvDftOptions & c, const Complex<T>* src, Complex<T>* dst)
     // 0. shuffle data
     if( dst != src )
     {
-        assert( !c.noPermute );
+        CV_Assert( !c.noPermute );
         if( !inv )
         {
             for( i = 0; i <= n - 2; i += 2, itab += 2*tab_step )
             {
                 int k0 = itab[0], k1 = itab[tab_step];
-                assert( (unsigned)k0 < (unsigned)n && (unsigned)k1 < (unsigned)n );
+                CV_Assert( (unsigned)k0 < (unsigned)n && (unsigned)k1 < (unsigned)n );
                 dst[i] = src[k0]; dst[i+1] = src[k1];
             }
 
@@ -892,7 +892,7 @@ DFT(const OcvDftOptions & c, const Complex<T>* src, Complex<T>* dst)
             for( i = 0; i <= n - 2; i += 2, itab += 2*tab_step )
             {
                 int k0 = itab[0], k1 = itab[tab_step];
-                assert( (unsigned)k0 < (unsigned)n && (unsigned)k1 < (unsigned)n );
+                CV_Assert( (unsigned)k0 < (unsigned)n && (unsigned)k1 < (unsigned)n );
                 t.re = src[k0].re; t.im = -src[k0].im;
                 dst[i] = t;
                 t.re = src[k1].re; t.im = -src[k1].im;
@@ -921,7 +921,7 @@ DFT(const OcvDftOptions & c, const Complex<T>* src, Complex<T>* dst)
                     for( i = 0; i < n2; i += 2, itab += tab_step*2 )
                     {
                         j = itab[0];
-                        assert( (unsigned)j < (unsigned)n2 );
+                        CV_Assert( (unsigned)j < (unsigned)n2 );
 
                         CV_SWAP(dst[i+1], dsth[j], t);
                         if( j > i )
@@ -938,7 +938,7 @@ DFT(const OcvDftOptions & c, const Complex<T>* src, Complex<T>* dst)
                 for( i = 0; i < n; i++, itab += tab_step )
                 {
                     j = itab[0];
-                    assert( (unsigned)j < (unsigned)n );
+                    CV_Assert( (unsigned)j < (unsigned)n );
                     if( j > i )
                         CV_SWAP(dst[i], dst[j], t);
                 }
@@ -1218,7 +1218,7 @@ RealDFT(const OcvDftOptions & c, const T* src, T* dst)
         setIppErrorStatus();
 #endif
     }
-    assert( c.tab_size == n );
+    CV_Assert( c.tab_size == n );
 
     if( n == 1 )
     {
@@ -1338,11 +1338,11 @@ CCSIDFT(const OcvDftOptions & c, const T* src, T* dst)
     T save_s1 = 0.;
     T t0, t1, t2, t3, t;
 
-    assert( c.tab_size == n );
+    CV_Assert( c.tab_size == n );
 
     if( complex_input )
     {
-        assert( src != dst );
+        CV_Assert( src != dst );
         save_s1 = src[1];
         ((T*)src)[1] = src[0];
         src++;
@@ -2420,7 +2420,7 @@ namespace cv {
 
 #define CLAMDDFT_Assert(func) \
     { \
-        clAmdFftStatus s = (func); \
+        clfftStatus s = (func); \
         CV_Assert(s == CLFFT_SUCCESS); \
     }
 
@@ -2437,8 +2437,8 @@ class PlanCache
             bool dft_scale = (flags & DFT_SCALE) != 0;
             bool dft_rows = (flags & DFT_ROWS) != 0;
 
-            clAmdFftLayout inLayout = CLFFT_REAL, outLayout = CLFFT_REAL;
-            clAmdFftDim dim = dft_size.height == 1 || dft_rows ? CLFFT_1D : CLFFT_2D;
+            clfftLayout inLayout = CLFFT_REAL, outLayout = CLFFT_REAL;
+            clfftDim dim = dft_size.height == 1 || dft_rows ? CLFFT_1D : CLFFT_2D;
 
             size_t batchSize = dft_rows ? dft_size.height : 1;
             size_t clLengthsIn[3] = { (size_t)dft_size.width, dft_rows ? 1 : (size_t)dft_size.height, 1 };
@@ -2475,28 +2475,30 @@ class PlanCache
             clStridesIn[2] = dft_rows ? clStridesIn[1] : dft_size.width * clStridesIn[1];
             clStridesOut[2] = dft_rows ? clStridesOut[1] : dft_size.width * clStridesOut[1];
 
-            CLAMDDFT_Assert(clAmdFftCreateDefaultPlan(&plHandle, (cl_context)ocl::Context::getDefault().ptr(), dim, clLengthsIn))
+            CLAMDDFT_Assert(clfftCreateDefaultPlan(&plHandle, (cl_context)ocl::Context::getDefault().ptr(), dim, clLengthsIn))
 
             // setting plan properties
-            CLAMDDFT_Assert(clAmdFftSetPlanPrecision(plHandle, doubleFP ? CLFFT_DOUBLE : CLFFT_SINGLE));
-            CLAMDDFT_Assert(clAmdFftSetResultLocation(plHandle, inplace ? CLFFT_INPLACE : CLFFT_OUTOFPLACE))
-            CLAMDDFT_Assert(clAmdFftSetLayout(plHandle, inLayout, outLayout))
-            CLAMDDFT_Assert(clAmdFftSetPlanBatchSize(plHandle, batchSize))
-            CLAMDDFT_Assert(clAmdFftSetPlanInStride(plHandle, dim, clStridesIn))
-            CLAMDDFT_Assert(clAmdFftSetPlanOutStride(plHandle, dim, clStridesOut))
-            CLAMDDFT_Assert(clAmdFftSetPlanDistance(plHandle, clStridesIn[dim], clStridesOut[dim]))
+            CLAMDDFT_Assert(clfftSetPlanPrecision(plHandle, doubleFP ? CLFFT_DOUBLE : CLFFT_SINGLE));
+            CLAMDDFT_Assert(clfftSetResultLocation(plHandle, inplace ? CLFFT_INPLACE : CLFFT_OUTOFPLACE))
+            CLAMDDFT_Assert(clfftSetLayout(plHandle, inLayout, outLayout))
+            CLAMDDFT_Assert(clfftSetPlanBatchSize(plHandle, batchSize))
+            CLAMDDFT_Assert(clfftSetPlanInStride(plHandle, dim, clStridesIn))
+            CLAMDDFT_Assert(clfftSetPlanOutStride(plHandle, dim, clStridesOut))
+            CLAMDDFT_Assert(clfftSetPlanDistance(plHandle, clStridesIn[dim], clStridesOut[dim]))
 
             float scale = dft_scale ? 1.0f / (dft_rows ? dft_size.width : dft_size.area()) : 1.0f;
-            CLAMDDFT_Assert(clAmdFftSetPlanScale(plHandle, dft_inverse ? CLFFT_BACKWARD : CLFFT_FORWARD, scale))
+            CLAMDDFT_Assert(clfftSetPlanScale(plHandle, dft_inverse ? CLFFT_BACKWARD : CLFFT_FORWARD, scale))
 
             // ready to bake
             cl_command_queue queue = (cl_command_queue)ocl::Queue::getDefault().ptr();
-            CLAMDDFT_Assert(clAmdFftBakePlan(plHandle, 1, &queue, NULL, NULL))
+            CLAMDDFT_Assert(clfftBakePlan(plHandle, 1, &queue, NULL, NULL))
         }
 
         ~FftPlan()
         {
-//            clAmdFftDestroyPlan(&plHandle);
+            // Do not tear down clFFT.
+            // The user application may still use clFFT even after OpenCV is unloaded.
+            /*clfftDestroyPlan(&plHandle);*/
         }
 
         friend class PlanCache;
@@ -2510,7 +2512,7 @@ class PlanCache
         FftType fftType;
 
         cl_context context;
-        clAmdFftPlanHandle plHandle;
+        clfftPlanHandle plHandle;
     };
 
 public:
@@ -2519,8 +2521,8 @@ public:
         CV_SINGLETON_LAZY_INIT_REF(PlanCache, new PlanCache())
     }
 
-    clAmdFftPlanHandle getPlanHandle(const Size & dft_size, int src_step, int dst_step, bool doubleFP,
-                                     bool inplace, int flags, FftType fftType)
+    clfftPlanHandle getPlanHandle(const Size & dft_size, int src_step, int dst_step, bool doubleFP,
+                                  bool inplace, int flags, FftType fftType)
     {
         cl_context currentContext = (cl_context)ocl::Context::getDefault().ptr();
 
@@ -2620,13 +2622,13 @@ static bool ocl_dft_amdfft(InputArray _src, OutputArray _dst, int flags)
     UMat src = _src.getUMat(), dst = _dst.getUMat();
     bool inplace = src.u == dst.u;
 
-    clAmdFftPlanHandle plHandle = PlanCache::getInstance().
+    clfftPlanHandle plHandle = PlanCache::getInstance().
             getPlanHandle(ssize, (int)src.step, (int)dst.step,
                           depth == CV_64F, inplace, flags, fftType);
 
     // get the bufferSize
     size_t bufferSize = 0;
-    CLAMDDFT_Assert(clAmdFftGetTmpBufSize(plHandle, &bufferSize))
+    CLAMDDFT_Assert(clfftGetTmpBufSize(plHandle, &bufferSize))
     UMat tmpBuffer(1, (int)bufferSize, CV_8UC1);
 
     cl_mem srcarg = (cl_mem)src.handle(ACCESS_READ);
@@ -2635,9 +2637,9 @@ static bool ocl_dft_amdfft(InputArray _src, OutputArray _dst, int flags)
     cl_command_queue queue = (cl_command_queue)ocl::Queue::getDefault().ptr();
     cl_event e = 0;
 
-    CLAMDDFT_Assert(clAmdFftEnqueueTransform(plHandle, dft_inverse ? CLFFT_BACKWARD : CLFFT_FORWARD,
-                                       1, &queue, 0, NULL, &e,
-                                       &srcarg, &dstarg, (cl_mem)tmpBuffer.handle(ACCESS_RW)))
+    CLAMDDFT_Assert(clfftEnqueueTransform(plHandle, dft_inverse ? CLFFT_BACKWARD : CLFFT_FORWARD,
+                                          1, &queue, 0, NULL, &e,
+                                          &srcarg, &dstarg, (cl_mem)tmpBuffer.handle(ACCESS_RW)))
 
     tmpBuffer.addref();
     clSetEventCallback(e, CL_COMPLETE, oclCleanupCallback, tmpBuffer.u);
@@ -3175,7 +3177,7 @@ protected:
             }
             else
             {
-                assert( !inv );
+                CV_Assert( !inv );
                 CopyColumn( dbuf0, complex_elem_size, dptr0,
                                dst_step, len, complex_elem_size );
                 if( even )
@@ -3872,7 +3874,7 @@ DCTInit( int n, int elem_size, void* _wave, int inv )
     if( n == 1 )
         return;
 
-    assert( (n&1) == 0 );
+    CV_Assert( (n&1) == 0 );
 
     if( (n & (n - 1)) == 0 )
     {
@@ -3910,7 +3912,7 @@ DCTInit( int n, int elem_size, void* _wave, int inv )
     else
     {
         Complex<float>* wave = (Complex<float>*)_wave;
-        assert( elem_size == sizeof(Complex<float>) );
+        CV_Assert( elem_size == sizeof(Complex<float>) );
 
         w.re = (float)scale;
         w.im = 0.f;

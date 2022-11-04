@@ -58,40 +58,6 @@ namespace
         return o;
     }
 
-    inline bool initTestDataPathSilent()
-    {
-#ifndef WINRT
-        static bool initialized = false;
-        if (!initialized)
-        {
-            // Since G-API has no own test data (yet), it is taken from the common space
-            const char* testDataPath = getenv("OPENCV_TEST_DATA_PATH");
-            if (testDataPath != nullptr) {
-                cvtest::addDataSearchPath(testDataPath);
-                initialized = true;
-            }
-        }
-
-        return initialized;
-#endif // WINRT
-    }
-
-    inline void initTestDataPath()
-    {
-        bool initialized = initTestDataPathSilent();
-        GAPI_Assert(initialized &&
-            "OPENCV_TEST_DATA_PATH environment variable is either not set or set incorrectly.");
-    }
-
-    inline void initTestDataPathOrSkip()
-    {
-        bool initialized = initTestDataPathSilent();
-        if (!initialized)
-        {
-            throw cvtest::SkipTestException("Can't find test data");
-        }
-    }
-
     template <typename T> inline void initPointRandU(cv::RNG &rng, cv::Point_<T>& pt)
     {
         GAPI_Assert(std::is_integral<T>::value);
@@ -299,7 +265,6 @@ public:
 
     void initMatFromImage(int type, const std::string& fileName)
     {
-        initTestDataPath();
 
         int channels = (type >> CV_CN_SHIFT) + 1;
         GAPI_Assert(channels == 1 || channels == 3 || channels == 4);
@@ -323,7 +288,6 @@ public:
 
     void initMatsFromImages(int channels, const std::string& pattern, int imgNum)
     {
-        initTestDataPath();
         GAPI_Assert(channels == 1 || channels == 3 || channels == 4);
         const int flags = (channels == 1) ? cv::IMREAD_GRAYSCALE : cv::IMREAD_COLOR;
 
@@ -542,6 +506,7 @@ struct TestWithParamsSpecific : public TestWithParamsBase<ParamsSpecific<Specifi
  * @param ...       list of names of user-defined parameters. if there are no parameters, the list
  *                  must be empty.
  */
+ //TODO: Consider to remove `Number` and use `std::tuple_size<decltype(std::make_tuple(__VA_ARGS__))>::value`
 #define GAPI_TEST_FIXTURE(Fixture, InitF, API, Number, ...) \
     struct Fixture : public TestWithParams API { \
         static_assert(Number == AllParams::specific_params_size, \
