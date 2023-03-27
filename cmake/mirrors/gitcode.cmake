@@ -72,8 +72,6 @@ endmacro()
 
 if((DL_ID STREQUAL "FFMPEG") OR (DL_ID STREQUAL "IPPICV") OR (DL_ID STREQUAL "data") OR (DL_ID STREQUAL "xfeatures2d/boostdesc") OR (DL_ID STREQUAL "xfeatures2d/vgg"))
   ocv_download_url_gitcode_usercontent(opencv)
-elseif(DL_ID STREQUAL "wechat_qrcode")
-  ocv_download_url_gitcode_usercontent(mirrors/WeChatCV)
 elseif((DL_ID STREQUAL "TENGINE") OR (DL_ID STREQUAL "NVIDIA_OPTICAL_FLOW") OR (DL_ID STREQUAL "TIM-VX"))
   ocv_download_url_gitcode_archive_commit_id()
 elseif(DL_ID STREQUAL "TBB")
