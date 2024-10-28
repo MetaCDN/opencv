@@ -53,9 +53,8 @@
 #include <unistd.h>  // -D_FORTIFY_SOURCE=2 workaround: https://github.com/opencv/opencv/issues/15020
 #endif
 
-
+#include "opencv2/core/cvdef.h"
 #include "opencv2/videoio.hpp"
-#include "opencv2/videoio/legacy/constants_c.h"
 
 #include "opencv2/core/utility.hpp"
 #ifdef __OPENCV_BUILD
@@ -75,14 +74,12 @@
 
 #include "opencv2/imgproc.hpp"
 #include "opencv2/imgproc/imgproc_c.h"
-#include "opencv2/videoio/videoio_c.h"
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
-#include <assert.h>  // FIXIT remove this
 
 #if defined _WIN32 || defined WINCE
     #if !defined _WIN32_WINNT

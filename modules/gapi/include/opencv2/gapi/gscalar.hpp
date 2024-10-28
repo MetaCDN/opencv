@@ -54,19 +54,19 @@ public:
     /**
      * @brief Constructs a value-initialized GScalar
      *
-     * In contrast with GMat (which can be either an explicit graph input
-     * or a result of some operation), GScalars may have their values
-     * be associated at graph construction time. It is useful when
-     * some operation has a GScalar input which doesn't change during
-     * the program execution, and is set only once. In this case,
-     * there is no need to declare such GScalar as a graph input.
+     * GScalars may have their values be associated at graph
+     * construction time. It is useful when some operation has a
+     * GScalar input which doesn't change during the program
+     * execution, and is set only once. In this case, there is no need
+     * to declare such GScalar as a graph input.
      *
      * @note The value of GScalar may be overwritten by assigning some
      * other GScalar to the object using `operator=` -- on the
-     * assigment, the old GScalar value is discarded.
+     * assignment, the old GScalar value is discarded.
      *
      * @param s a cv::Scalar value to associate with this GScalar object.
      */
+    GAPI_WRAP
     explicit GScalar(const cv::Scalar& s);
 
     /**
@@ -88,7 +88,7 @@ public:
      * This constructor overload is not marked `explicit` and can be
      * used in G-API expression code like this:
      *
-     * @snippet modules/gapi/samples/api_ref_snippets.cpp gscalar_implicit
+     * @snippet samples/cpp/tutorial_code/gapi/doc_snippets/api_ref_snippets.cpp gscalar_implicit
      *
      * Here operator+(GMat,GScalar) is used to wrap cv::gapi::addC()
      * and a value-initialized GScalar is created on the fly.

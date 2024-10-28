@@ -52,11 +52,7 @@
 #include "../op_inf_engine.hpp"
 #ifdef HAVE_DNN_NGRAPH
 #include "../ie_ngraph.hpp"
-#if INF_ENGINE_VER_MAJOR_GT(INF_ENGINE_RELEASE_2020_4)
-#include <ngraph/op/reorg_yolo.hpp>
-#else
-#include <ngraph/op/experimental/layers/reorg_yolo.hpp>
-#endif
+#include <openvino/op/reorg_yolo.hpp>
 #endif
 
 #include "../op_cuda.hpp"
@@ -151,10 +147,12 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
+#ifdef HAVE_INF_ENGINE
+        if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
+            return true;
+#endif
         return backendId == DNN_BACKEND_OPENCV ||
-               backendId == DNN_BACKEND_CUDA ||
-               backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 ||
-               backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH;
+               backendId == DNN_BACKEND_CUDA;
     }
 
 #ifdef HAVE_OPENCL
@@ -182,7 +180,7 @@ public:
         CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                    forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -198,22 +196,12 @@ public:
     }
 
 
-#ifdef HAVE_DNN_IE_NN_BUILDER_2019
-    virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
-    {
-        InferenceEngine::Builder::ReorgYoloLayer ieLayer(name);
-        ieLayer.setStride(reorgStride);
-        return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
-    }
-#endif  // HAVE_DNN_IE_NN_BUILDER_2019
-
-
 #ifdef HAVE_DNN_NGRAPH
     virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> > &inputs,
                                         const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
         auto& ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
-        auto reorg = std::make_shared<ngraph::op::ReorgYolo>(ieInpNode, ngraph::Strides{(size_t)reorgStride});
+        auto reorg = std::make_shared<ov::op::v0::ReorgYolo>(ieInpNode, ov::Strides{(size_t)reorgStride});
         return Ptr<BackendNode>(new InfEngineNgraphNode(reorg));
     }
 #endif  // HAVE_DNN_NGRAPH

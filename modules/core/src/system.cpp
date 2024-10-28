@@ -42,8 +42,18 @@
 //M*/
 
 #include "precomp.hpp"
+#include <atomic>
 #include <iostream>
 #include <ostream>
+
+#ifdef __QNX__
+    #include <unistd.h>
+    #include <sys/neutrino.h>
+    #include <sys/syspage.h>
+#ifdef __aarch64__
+    #include <aarch64/syspage.h>
+#endif
+#endif
 
 #include <opencv2/core/utils/configuration.private.hpp>
 #include <opencv2/core/utils/trace.private.hpp>
@@ -55,17 +65,8 @@
 
 #include <opencv2/core/utils/filesystem.private.hpp>
 
-#ifndef OPENCV_WITH_THREAD_SANITIZER
-  #if defined(__clang__) && defined(__has_feature)
-  #if __has_feature(thread_sanitizer)
-      #define OPENCV_WITH_THREAD_SANITIZER 1
-      #include <atomic>  // assume C++11
-  #endif
-  #endif
-#endif
-#ifndef OPENCV_WITH_THREAD_SANITIZER
-    #define OPENCV_WITH_THREAD_SANITIZER 0
-#endif
+#include <opencv2/core/utils/fp_control_utils.hpp>
+#include <opencv2/core/utils/fp_control.private.hpp>
 
 namespace cv {
 
@@ -128,11 +129,15 @@ void* allocSingletonNewBuffer(size_t size) { return malloc(size); }
 #include <cstdlib>        // std::abort
 #endif
 
-#if defined __ANDROID__ || defined __unix__ || defined __FreeBSD__ || defined __OpenBSD__ || defined __HAIKU__ || defined __Fuchsia__
+#if defined __ANDROID__ || defined __unix__ || defined __FreeBSD__ || defined __OpenBSD__ || defined __HAIKU__ || defined __Fuchsia__ || defined __QNX__
 #  include <unistd.h>
 #  include <fcntl.h>
-#if defined __QNXNTO__
+#if defined __QNX__
 #  include <sys/elf.h>
+#  include <sys/auxv.h>
+using Elf64_auxv_t = auxv64_t;
+#  include <elfdefinitions.h>
+const uint64_t AT_HWCAP = NT_GNU_HWCAP;
 #else
 #  include <elf.h>
 #endif
@@ -157,6 +162,15 @@ void* allocSingletonNewBuffer(size_t size) { return malloc(size); }
 # ifndef PPC_FEATURE2_ARCH_3_00
 #   define PPC_FEATURE2_ARCH_3_00 0x00800000
 # endif
+# ifndef PPC_FEATURE_HAS_VSX
+#   define PPC_FEATURE_HAS_VSX 0x00000080
+# endif
+#endif
+
+#if defined __loongarch64
+#include "sys/auxv.h"
+#define LA_HWCAP_LSX   (1<<4)
+#define LA_HWCAP_LASX  (1<<5)
 #endif
 
 #if defined _WIN32 || defined WINCE
@@ -241,6 +255,7 @@ std::wstring GetTempFileNameWinRT(std::wstring prefix)
 #if defined __MACH__ && defined __APPLE__
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <sys/sysctl.h>
 #endif
 
 #endif
@@ -249,7 +264,7 @@ std::wstring GetTempFileNameWinRT(std::wstring prefix)
 #include "omp.h"
 #endif
 
-#if defined __unix__ || defined __APPLE__ || defined __EMSCRIPTEN__ || defined __FreeBSD__ || defined __GLIBC__ || defined __HAIKU__
+#if defined __unix__ || defined __APPLE__ || defined __EMSCRIPTEN__ || defined __FreeBSD__ || defined __OpenBSD__ || defined __GLIBC__ || defined __HAIKU__
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -299,6 +314,7 @@ DECLARE_CV_CPUID_X86
   #endif
 #endif
 
+#include <chrono>
 
 namespace cv
 {
@@ -311,12 +327,12 @@ Exception::Exception(int _code, const String& _err, const String& _func, const S
     formatMessage();
 }
 
-Exception::~Exception() throw() {}
+Exception::~Exception() CV_NOEXCEPT {}
 
 /*!
  \return the error description and the context as a text string.
  */
-const char* Exception::what() const throw() { return msg.c_str(); }
+const char* Exception::what() const CV_NOEXCEPT { return msg.c_str(); }
 
 void Exception::formatMessage()
 {
@@ -408,6 +424,9 @@ struct HWFeatures
         g_hwFeatureNames[CPU_AVX_5124FMAPS] = "AVX5124FMAPS";
 
         g_hwFeatureNames[CPU_NEON] = "NEON";
+        g_hwFeatureNames[CPU_NEON_DOTPROD] = "NEON_DOTPROD";
+        g_hwFeatureNames[CPU_NEON_FP16] = "NEON_FP16";
+        g_hwFeatureNames[CPU_NEON_BF16] = "NEON_BF16";
 
         g_hwFeatureNames[CPU_VSX] = "VSX";
         g_hwFeatureNames[CPU_VSX3] = "VSX3";
@@ -424,6 +443,9 @@ struct HWFeatures
         g_hwFeatureNames[CPU_AVX512_ICL] = "AVX512-ICL";
 
         g_hwFeatureNames[CPU_RVV] = "RVV";
+
+        g_hwFeatureNames[CPU_LSX]  = "LSX";
+        g_hwFeatureNames[CPU_LASX] = "LASX";
     }
 
     void initialize(void)
@@ -551,10 +573,35 @@ struct HWFeatures
         }
     #endif // CV_CPUID_X86
 
-    #if defined __ANDROID__ || defined __linux__ || defined __FreeBSD__
+    #if defined __ANDROID__ || defined __linux__ || defined __QNX__
     #ifdef __aarch64__
         have[CV_CPU_NEON] = true;
         have[CV_CPU_FP16] = true;
+        int cpufile = open("/proc/self/auxv", O_RDONLY);
+
+        if (cpufile >= 0)
+        {
+            Elf64_auxv_t auxv;
+            const size_t size_auxv_t = sizeof(auxv);
+
+            while ((size_t)read(cpufile, &auxv, size_auxv_t) == size_auxv_t)
+            {
+                // see https://elixir.bootlin.com/linux/latest/source/arch/arm64/include/uapi/asm/hwcap.h
+                if (auxv.a_type == AT_HWCAP)
+                {
+                    have[CV_CPU_NEON_DOTPROD] = (auxv.a_un.a_val & (1 << 20)) != 0; // HWCAP_ASIMDDP
+                    have[CV_CPU_NEON_FP16] = (auxv.a_un.a_val & (1 << 10)) != 0; // HWCAP_ASIMDHP
+                }
+#if defined(AT_HWCAP2)
+                else if (auxv.a_type == AT_HWCAP2)
+                {
+                    have[CV_CPU_NEON_BF16] = (auxv.a_un.a_val & (1 << 14)) != 0; // HWCAP2_BF16
+                }
+#endif
+            }
+
+            close(cpufile);
+        }
     #elif defined __arm__ && defined __ANDROID__
       #if defined HAVE_CPUFEATURES
         CV_LOG_INFO(NULL, "calling android_getCpuFeatures() ...");
@@ -577,7 +624,7 @@ struct HWFeatures
         CV_LOG_INFO(NULL, "- FP16 instructions is NOT enabled via build flags");
         #endif
       #endif
-    #elif defined __arm__ && !defined __FreeBSD__
+    #elif defined __arm__
         int cpufile = open("/proc/self/auxv", O_RDONLY);
 
         if (cpufile >= 0)
@@ -598,15 +645,40 @@ struct HWFeatures
             close(cpufile);
         }
     #endif
-    #elif (defined __clang__ || defined __APPLE__)
-    #if (defined __ARM_NEON__ || (defined __ARM_NEON && defined __aarch64__))
+    #elif (defined __APPLE__)
+    #if defined __ARM_NEON
         have[CV_CPU_NEON] = true;
     #endif
-    #if (defined __ARM_FP  && (((__ARM_FP & 0x2) != 0) && defined __ARM_NEON__))
+    #if (defined __ARM_FP  && (((__ARM_FP & 0x2) != 0) && defined __ARM_NEON))
+        have[CV_CPU_FP16] = have[CV_CPU_NEON_FP16] = true;
+    #endif
+    // system.cpp may be compiled w/o special -march=armv8...+dotprod, -march=armv8...+bf16 etc.,
+    // so we check for the features in any case, no mater what are the compile flags.
+    // We check the real hardware capabilities here.
+    int has_feat_dotprod = 0;
+    size_t has_feat_dotprod_size = sizeof(has_feat_dotprod);
+    sysctlbyname("hw.optional.arm.FEAT_DotProd", &has_feat_dotprod, &has_feat_dotprod_size, NULL, 0);
+    if (has_feat_dotprod) {
+        have[CV_CPU_NEON_DOTPROD] = true;
+    }
+    int has_feat_bf16 = 0;
+    size_t has_feat_bf16_size = sizeof(has_feat_bf16);
+    sysctlbyname("hw.optional.arm.FEAT_BF16", &has_feat_bf16, &has_feat_bf16_size, NULL, 0);
+    if (has_feat_bf16) {
+        have[CV_CPU_NEON_BF16] = true;
+    }
+    #elif (defined __clang__)
+    #if defined __ARM_NEON
+        have[CV_CPU_NEON] = true;
+        #if (defined __ARM_FP  && ((__ARM_FP & 0x2) != 0))
         have[CV_CPU_FP16] = true;
+        #endif
     #endif
     #endif
     #if defined _ARM_ && (defined(_WIN32_WCE) && _WIN32_WCE >= 0x800)
+        have[CV_CPU_NEON] = true;
+    #endif
+    #if defined _M_ARM64
         have[CV_CPU_NEON] = true;
     #endif
     #ifdef __riscv_vector
@@ -616,7 +688,7 @@ struct HWFeatures
         have[CV_CPU_MSA] = true;
     #endif
 
-    #if (defined __ppc64__ || defined __PPC64__) && defined __unix__
+    #if (defined __ppc64__ || defined __PPC64__) && defined __linux__
         unsigned int hwcap = getauxval(AT_HWCAP);
         if (hwcap & PPC_FEATURE_HAS_VSX) {
             hwcap = getauxval(AT_HWCAP2);
@@ -626,8 +698,19 @@ struct HWFeatures
                 have[CV_CPU_VSX] = (hwcap & PPC_FEATURE2_ARCH_2_07) != 0;
             }
         }
+    #elif (defined __ppc64__ || defined __PPC64__) && defined __FreeBSD__
+        unsigned long hwcap = 0;
+        elf_aux_info(AT_HWCAP, &hwcap, sizeof(hwcap));
+        if (hwcap & PPC_FEATURE_HAS_VSX) {
+            elf_aux_info(AT_HWCAP2, &hwcap, sizeof(hwcap));
+            if (hwcap & PPC_FEATURE2_ARCH_3_00) {
+                have[CV_CPU_VSX] = have[CV_CPU_VSX3] = true;
+            } else {
+                have[CV_CPU_VSX] = (hwcap & PPC_FEATURE2_ARCH_2_07) != 0;
+            }
+        }
     #else
-        // TODO: AIX, FreeBSD
+        // TODO: AIX, OpenBSD
         #if CV_VSX || defined _ARCH_PWR8 || defined __POWER9_VECTOR__
             have[CV_CPU_VSX] = true;
         #endif
@@ -638,6 +721,13 @@ struct HWFeatures
 
     #if defined __riscv && defined __riscv_vector
         have[CV_CPU_RVV] = true;
+    #endif
+
+    #if defined __loongarch64 && defined __linux__
+        int flag = (int)getauxval(AT_HWCAP);
+
+        have[CV_CPU_LSX] = (flag & LA_HWCAP_LSX) != 0;
+        have[CV_CPU_LASX] = (flag & LA_HWCAP_LASX) != 0;
     #endif
 
         bool skip_baseline_check = false;
@@ -826,43 +916,15 @@ bool useOptimized(void)
 
 int64 getTickCount(void)
 {
-#if defined _WIN32 || defined WINCE
-    LARGE_INTEGER counter;
-    QueryPerformanceCounter( &counter );
-    return (int64)counter.QuadPart;
-#elif defined __MACH__ && defined __APPLE__
-    return (int64)mach_absolute_time();
-#elif defined __unix__
-    struct timespec tp;
-    clock_gettime(CLOCK_MONOTONIC, &tp);
-    return (int64)tp.tv_sec*1000000000 + tp.tv_nsec;
-#else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (int64)tv.tv_sec*1000000 + tv.tv_usec;
-#endif
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    return (int64)now.time_since_epoch().count();
 }
 
 double getTickFrequency(void)
 {
-#if defined _WIN32 || defined WINCE
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    return (double)freq.QuadPart;
-#elif defined __MACH__ && defined __APPLE__
-    static double freq = 0;
-    if( freq == 0 )
-    {
-        mach_timebase_info_data_t sTimebaseInfo;
-        mach_timebase_info(&sTimebaseInfo);
-        freq = sTimebaseInfo.denom*1e9/sTimebaseInfo.numer;
-    }
-    return freq;
-#elif defined __unix__
-    return 1e9;
-#else
-    return 1e6;
-#endif
+    using clock_period_t = std::chrono::steady_clock::duration::period;
+    double clock_freq = clock_period_t::den / clock_period_t::num;
+    return clock_freq;
 }
 
 #if defined __GNUC__ && (defined __i386__ || defined __x86_64__ || defined __ppc__)
@@ -929,6 +991,51 @@ int64 getCPUTickCount(void)
 //#endif
 
 #endif
+
+
+namespace internal {
+
+class Timestamp
+{
+public:
+    const int64 zeroTickCount;
+    const double ns_in_ticks;
+
+    Timestamp()
+        : zeroTickCount(getTickCount())
+        , ns_in_ticks(1e9 / getTickFrequency())
+    {
+        // nothing
+    }
+
+    int64 getTimestamp()
+    {
+        int64 t = getTickCount();
+        return (int64)((t - zeroTickCount) * ns_in_ticks);
+    }
+
+    static Timestamp& getInstance()
+    {
+        static Timestamp g_timestamp;
+        return g_timestamp;
+    }
+};
+
+class InitTimestamp {
+public:
+    InitTimestamp() {
+        Timestamp::getInstance();
+    }
+};
+static InitTimestamp g_initialize_timestamp;  // force zero timestamp initialization
+
+}  // namespace
+
+int64 getTimestampNS()
+{
+    return internal::Timestamp::getInstance().getTimestamp();
+}
+
 
 const String& getBuildInformation()
 {
@@ -1218,6 +1325,12 @@ redirectError( ErrorCallback errCallback, void* userdata, void** prevUserdata)
     return prevCallback;
 }
 
+void terminate(int _code, const String& _err, const char* _func, const char* _file, int _line) CV_NOEXCEPT
+{
+    dumpException(cv::Exception(_code, _err, _func, _file, _line));
+    std::terminate();
+}
+
 }
 
 CV_IMPL int cvCheckHardwareSupport(int feature)
@@ -1279,41 +1392,41 @@ CV_IMPL const char* cvErrorStr( int status )
 
     switch (status)
     {
-    case CV_StsOk :                  return "No Error";
-    case CV_StsBackTrace :           return "Backtrace";
-    case CV_StsError :               return "Unspecified error";
-    case CV_StsInternal :            return "Internal error";
-    case CV_StsNoMem :               return "Insufficient memory";
-    case CV_StsBadArg :              return "Bad argument";
-    case CV_StsNoConv :              return "Iterations do not converge";
-    case CV_StsAutoTrace :           return "Autotrace call";
-    case CV_StsBadSize :             return "Incorrect size of input array";
-    case CV_StsNullPtr :             return "Null pointer";
-    case CV_StsDivByZero :           return "Division by zero occurred";
-    case CV_BadStep :                return "Image step is wrong";
-    case CV_StsInplaceNotSupported : return "Inplace operation is not supported";
-    case CV_StsObjectNotFound :      return "Requested object was not found";
-    case CV_BadDepth :               return "Input image depth is not supported by function";
-    case CV_StsUnmatchedFormats :    return "Formats of input arguments do not match";
-    case CV_StsUnmatchedSizes :      return "Sizes of input arguments do not match";
-    case CV_StsOutOfRange :          return "One of the arguments\' values is out of range";
-    case CV_StsUnsupportedFormat :   return "Unsupported format or combination of formats";
-    case CV_BadCOI :                 return "Input COI is not supported";
-    case CV_BadNumChannels :         return "Bad number of channels";
-    case CV_StsBadFlag :             return "Bad flag (parameter or structure field)";
-    case CV_StsBadPoint :            return "Bad parameter of type CvPoint";
-    case CV_StsBadMask :             return "Bad type of mask argument";
-    case CV_StsParseError :          return "Parsing error";
-    case CV_StsNotImplemented :      return "The function/feature is not implemented";
-    case CV_StsBadMemBlock :         return "Memory block has been corrupted";
-    case CV_StsAssert :              return "Assertion failed";
-    case CV_GpuNotSupported :        return "No CUDA support";
-    case CV_GpuApiCallError :        return "Gpu API call";
-    case CV_OpenGlNotSupported :     return "No OpenGL support";
-    case CV_OpenGlApiCallError :     return "OpenGL API call";
+    case cv::Error::StsOk :                  return "No Error";
+    case cv::Error::StsBackTrace :           return "Backtrace";
+    case cv::Error::StsError :               return "Unspecified error";
+    case cv::Error::StsInternal :            return "Internal error";
+    case cv::Error::StsNoMem :               return "Insufficient memory";
+    case cv::Error::StsBadArg :              return "Bad argument";
+    case cv::Error::StsNoConv :              return "Iterations do not converge";
+    case cv::Error::StsAutoTrace :           return "Autotrace call";
+    case cv::Error::StsBadSize :             return "Incorrect size of input array";
+    case cv::Error::StsNullPtr :             return "Null pointer";
+    case cv::Error::StsDivByZero :           return "Division by zero occurred";
+    case cv::Error::BadStep :                return "Image step is wrong";
+    case cv::Error::StsInplaceNotSupported : return "Inplace operation is not supported";
+    case cv::Error::StsObjectNotFound :      return "Requested object was not found";
+    case cv::Error::BadDepth :               return "Input image depth is not supported by function";
+    case cv::Error::StsUnmatchedFormats :    return "Formats of input arguments do not match";
+    case cv::Error::StsUnmatchedSizes :      return "Sizes of input arguments do not match";
+    case cv::Error::StsOutOfRange :          return "One of the arguments\' values is out of range";
+    case cv::Error::StsUnsupportedFormat :   return "Unsupported format or combination of formats";
+    case cv::Error::BadCOI :                 return "Input COI is not supported";
+    case cv::Error::BadNumChannels :         return "Bad number of channels";
+    case cv::Error::StsBadFlag :             return "Bad flag (parameter or structure field)";
+    case cv::Error::StsBadPoint :            return "Bad parameter of type CvPoint";
+    case cv::Error::StsBadMask :             return "Bad type of mask argument";
+    case cv::Error::StsParseError :          return "Parsing error";
+    case cv::Error::StsNotImplemented :      return "The function/feature is not implemented";
+    case cv::Error::StsBadMemBlock :         return "Memory block has been corrupted";
+    case cv::Error::StsAssert :              return "Assertion failed";
+    case cv::Error::GpuNotSupported :        return "No CUDA support";
+    case cv::Error::GpuApiCallError :        return "Gpu API call";
+    case cv::Error::OpenGlNotSupported :     return "No OpenGL support";
+    case cv::Error::OpenGlApiCallError :     return "OpenGL API call";
     };
 
-    sprintf(buf, "Unknown %s code %d", status >= 0 ? "status":"error", status);
+    snprintf(buf, sizeof(buf), "Unknown %s code %d", status >= 0 ? "status":"error", status);
     return buf;
 }
 
@@ -1350,29 +1463,29 @@ cvErrorFromIppStatus( int status )
 {
     switch (status)
     {
-    case CV_BADSIZE_ERR:               return CV_StsBadSize;
-    case CV_BADMEMBLOCK_ERR:           return CV_StsBadMemBlock;
-    case CV_NULLPTR_ERR:               return CV_StsNullPtr;
-    case CV_DIV_BY_ZERO_ERR:           return CV_StsDivByZero;
-    case CV_BADSTEP_ERR:               return CV_BadStep;
-    case CV_OUTOFMEM_ERR:              return CV_StsNoMem;
-    case CV_BADARG_ERR:                return CV_StsBadArg;
-    case CV_NOTDEFINED_ERR:            return CV_StsError;
-    case CV_INPLACE_NOT_SUPPORTED_ERR: return CV_StsInplaceNotSupported;
-    case CV_NOTFOUND_ERR:              return CV_StsObjectNotFound;
-    case CV_BADCONVERGENCE_ERR:        return CV_StsNoConv;
-    case CV_BADDEPTH_ERR:              return CV_BadDepth;
-    case CV_UNMATCHED_FORMATS_ERR:     return CV_StsUnmatchedFormats;
-    case CV_UNSUPPORTED_COI_ERR:       return CV_BadCOI;
-    case CV_UNSUPPORTED_CHANNELS_ERR:  return CV_BadNumChannels;
-    case CV_BADFLAG_ERR:               return CV_StsBadFlag;
-    case CV_BADRANGE_ERR:              return CV_StsBadArg;
-    case CV_BADCOEF_ERR:               return CV_StsBadArg;
-    case CV_BADFACTOR_ERR:             return CV_StsBadArg;
-    case CV_BADPOINT_ERR:              return CV_StsBadPoint;
+    case CV_BADSIZE_ERR:               return cv::Error::StsBadSize;
+    case CV_BADMEMBLOCK_ERR:           return cv::Error::StsBadMemBlock;
+    case CV_NULLPTR_ERR:               return cv::Error::StsNullPtr;
+    case CV_DIV_BY_ZERO_ERR:           return cv::Error::StsDivByZero;
+    case CV_BADSTEP_ERR:               return cv::Error::BadStep;
+    case CV_OUTOFMEM_ERR:              return cv::Error::StsNoMem;
+    case CV_BADARG_ERR:                return cv::Error::StsBadArg;
+    case CV_NOTDEFINED_ERR:            return cv::Error::StsError;
+    case CV_INPLACE_NOT_SUPPORTED_ERR: return cv::Error::StsInplaceNotSupported;
+    case CV_NOTFOUND_ERR:              return cv::Error::StsObjectNotFound;
+    case CV_BADCONVERGENCE_ERR:        return cv::Error::StsNoConv;
+    case CV_BADDEPTH_ERR:              return cv::Error::BadDepth;
+    case CV_UNMATCHED_FORMATS_ERR:     return cv::Error::StsUnmatchedFormats;
+    case CV_UNSUPPORTED_COI_ERR:       return cv::Error::BadCOI;
+    case CV_UNSUPPORTED_CHANNELS_ERR:  return cv::Error::BadNumChannels;
+    case CV_BADFLAG_ERR:               return cv::Error::StsBadFlag;
+    case CV_BADRANGE_ERR:              return cv::Error::StsBadArg;
+    case CV_BADCOEF_ERR:               return cv::Error::StsBadArg;
+    case CV_BADFACTOR_ERR:             return cv::Error::StsBadArg;
+    case CV_BADPOINT_ERR:              return cv::Error::StsBadPoint;
 
     default:
-      return CV_StsError;
+      return cv::Error::StsError;
     }
 }
 
@@ -1423,11 +1536,7 @@ private:
 #endif
 #else // _WIN32
     pthread_key_t  tlsKey;
-#if OPENCV_WITH_THREAD_SANITIZER
     std::atomic<bool> disposed;
-#else
-    bool disposed;
-#endif
 #endif
 };
 
@@ -2473,7 +2582,7 @@ public:
         ippStatus = ippGetCpuFeatures(&cpuFeatures, NULL);
         if(ippStatus < 0)
         {
-            std::cerr << "ERROR: IPP cannot detect CPU features, IPP was disabled " << std::endl;
+            CV_LOG_ERROR(NULL, "ERROR: IPP cannot detect CPU features, IPP was disabled");
             useIPP = false;
             return;
         }
@@ -2511,7 +2620,7 @@ public:
 
             if(env == "disabled")
             {
-                std::cerr << "WARNING: IPP was disabled by OPENCV_IPP environment variable" << std::endl;
+                CV_LOG_WARNING(NULL, "WARNING: IPP was disabled by OPENCV_IPP environment variable");
                 useIPP = false;
             }
             else if(env == "sse42")
@@ -2525,7 +2634,7 @@ public:
 #endif
 #endif
             else
-                std::cerr << "ERROR: Improper value of OPENCV_IPP: " << env.c_str() << ". Correct values are: disabled, sse42, avx2, avx512 (Intel64 only)" << std::endl;
+                CV_LOG_ERROR(NULL, "ERROR: Improper value of OPENCV_IPP: " << env.c_str() << ". Correct values are: disabled, sse42, avx2, avx512 (Intel64 only)");
 
             // Trim unsupported features
             ippFeatures &= cpuFeatures;
@@ -2712,6 +2821,90 @@ void setUseIPP_NotExact(bool flag)
 }
 
 } // namespace ipp
+
+
+namespace details {
+
+#if OPENCV_IMPL_FP_HINTS_X86
+#ifndef _MM_DENORMALS_ZERO_ON  // requires pmmintrin.h (SSE3)
+#define _MM_DENORMALS_ZERO_ON 0x0040
+#endif
+#ifndef _MM_DENORMALS_ZERO_MASK  // requires pmmintrin.h (SSE3)
+#define _MM_DENORMALS_ZERO_MASK 0x0040
+#endif
+#endif
+
+void setFPDenormalsIgnoreHint(bool ignore, CV_OUT FPDenormalsModeState& state)
+{
+#if OPENCV_IMPL_FP_HINTS_X86
+    unsigned mask = _MM_FLUSH_ZERO_MASK;
+    unsigned value = ignore ? _MM_FLUSH_ZERO_ON : 0;
+    if (featuresEnabled.have[CPU_SSE3])
+    {
+        mask |= _MM_DENORMALS_ZERO_MASK;
+        value |= ignore ? _MM_DENORMALS_ZERO_ON : 0;
+    }
+    const unsigned old_flags = _mm_getcsr();
+    const unsigned old_value = old_flags & mask;
+    unsigned flags = (old_flags & ~mask) | value;
+    CV_LOG_DEBUG(NULL, "core: update FP mxcsr flags = " << cv::format("0x%08x", flags));
+    // save state
+    state.reserved[0] = (uint32_t)mask;
+    state.reserved[1] = (uint32_t)old_value;
+    _mm_setcsr(flags);
+#else
+    CV_UNUSED(ignore); CV_UNUSED(state);
+#endif
+}
+
+int saveFPDenormalsState(CV_OUT FPDenormalsModeState& state)
+{
+#if OPENCV_IMPL_FP_HINTS_X86
+    unsigned mask = _MM_FLUSH_ZERO_MASK;
+    if (featuresEnabled.have[CPU_SSE3])
+    {
+        mask |= _MM_DENORMALS_ZERO_MASK;
+    }
+    const unsigned old_flags = _mm_getcsr();
+    const unsigned old_value = old_flags & mask;
+    // save state
+    state.reserved[0] = (uint32_t)mask;
+    state.reserved[1] = (uint32_t)old_value;
+    return 2;
+#else
+    CV_UNUSED(state);
+    return 0;
+#endif
+}
+
+bool restoreFPDenormalsState(const FPDenormalsModeState& state)
+{
+#if OPENCV_IMPL_FP_HINTS_X86
+    const unsigned mask = (unsigned)state.reserved[0];
+    CV_DbgAssert(mask != 0); // invalid state (ensure that state is properly saved earlier)
+    const unsigned value = (unsigned)state.reserved[1];
+    CV_DbgCheck((int)value, value == (value & mask), "invalid SSE FP state");
+    const unsigned old_flags = _mm_getcsr();
+    unsigned flags = (old_flags & ~mask) | value;
+    CV_LOG_DEBUG(NULL, "core: restore FP mxcsr flags = " << cv::format("0x%08x", flags));
+    _mm_setcsr(flags);
+    return true;
+#else
+    CV_UNUSED(state);
+    return false;
+#endif
+}
+
+}  // namespace details
+
+AlgorithmHint getDefaultAlgorithmHint()
+{
+#ifdef OPENCV_ALGO_HINT_DEFAULT
+    return OPENCV_ALGO_HINT_DEFAULT;
+#else
+    return ALGO_HINT_ACCURATE;
+#endif
+};
 
 } // namespace cv
 

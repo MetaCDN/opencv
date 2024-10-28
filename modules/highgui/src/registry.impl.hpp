@@ -44,6 +44,10 @@ std::vector<BackendInfo>& getBuiltinBackendsInfo()
         DECLARE_DYNAMIC_BACKEND("GTK2")
 #endif
 
+#ifdef HAVE_FRAMEBUFFER
+        DECLARE_STATIC_BACKEND("FB", createUIBackendFramebuffer)
+#endif
+
 #if 0  // TODO
 #ifdef HAVE_QT
         DECLARE_STATIC_BACKEND("QT", createUIBackendQT)
@@ -61,7 +65,7 @@ std::vector<BackendInfo>& getBuiltinBackendsInfo()
 #endif
     };
     return g_backends;
-};
+}
 
 static
 bool sortByPriority(const BackendInfo &lhs, const BackendInfo &rhs)

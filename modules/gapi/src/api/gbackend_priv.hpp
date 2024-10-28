@@ -66,7 +66,7 @@ public:
     // they are called when meta information becomes available.
     virtual void addMetaSensitiveBackendPasses(ade::ExecutionEngineSetupContext &);
 
-    virtual cv::gapi::GKernelPackage auxiliaryKernels() const;
+    virtual cv::GKernelPackage auxiliaryKernels() const;
 
     // Ask backend if it has a custom control over island fusion process
     // This method is quite redundant but there's nothing better fits
@@ -83,6 +83,14 @@ public:
                              const ade::NodeHandle &a_nh,
                              const ade::NodeHandle &slot_nh,
                              const ade::NodeHandle &b_nh) const;
+
+    // Ask backend if it supports CONST_VAL data of the given shape or not.
+    // If the backend does support this data type, a Data node with such
+    // value can be fused into the backend's Island body.
+    // If the backend doesn't support this data type, a Data node won't
+    // be fused into the Islands's body -- will be marked as an in-graph
+    // input connection for this Island.
+    virtual bool supportsConst(cv::GShape shape) const;
 
     virtual ~Priv() = default;
 };

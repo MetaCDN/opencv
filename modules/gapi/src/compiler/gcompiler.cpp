@@ -33,6 +33,7 @@
 #include "compiler/passes/pattern_matching.hpp"
 
 #include "executor/gexecutor.hpp"
+#include "executor/gthreadedexecutor.hpp"
 #include "executor/gstreamingexecutor.hpp"
 #include "backends/common/gbackend.hpp"
 #include "backends/common/gmetabackend.hpp"
@@ -53,18 +54,18 @@
 
 namespace
 {
-    cv::gapi::GKernelPackage getKernelPackage(cv::GCompileArgs &args)
+    cv::GKernelPackage getKernelPackage(cv::GCompileArgs &args)
     {
-        auto withAuxKernels = [](const cv::gapi::GKernelPackage& pkg) {
-            cv::gapi::GKernelPackage aux_pkg;
+        auto withAuxKernels = [](const cv::GKernelPackage& pkg) {
+            cv::GKernelPackage aux_pkg;
             for (const auto &b : pkg.backends()) {
-                aux_pkg = combine(aux_pkg, b.priv().auxiliaryKernels());
+                aux_pkg = cv::gapi::combine(aux_pkg, b.priv().auxiliaryKernels());
             }
             // Always include built-in meta<> and copy implementation
-            return combine(pkg,
-                           aux_pkg,
-                           cv::gimpl::meta::kernels(),
-                           cv::gimpl::streaming::kernels());
+            return cv::gapi::combine(pkg,
+                                     aux_pkg,
+                                     cv::gimpl::meta::kernels(),
+                                     cv::gimpl::streaming::kernels());
         };
 
         auto has_use_only = cv::gapi::getCompileArg<cv::gapi::use_only>(args);
@@ -73,18 +74,18 @@ namespace
 
         static auto ocv_pkg =
 #if !defined(GAPI_STANDALONE)
-            combine(cv::gapi::core::cpu::kernels(),
-                    cv::gapi::imgproc::cpu::kernels(),
-                    cv::gapi::video::cpu::kernels(),
-                    cv::gapi::render::ocv::kernels(),
-                    cv::gapi::streaming::kernels());
+            cv::gapi::combine(cv::gapi::core::cpu::kernels(),
+                              cv::gapi::imgproc::cpu::kernels(),
+                              cv::gapi::video::cpu::kernels(),
+                              cv::gapi::render::ocv::kernels(),
+                              cv::gapi::streaming::kernels());
 #else
-            cv::gapi::GKernelPackage();
+            cv::GKernelPackage();
 #endif // !defined(GAPI_STANDALONE)
 
-        auto user_pkg = cv::gapi::getCompileArg<cv::gapi::GKernelPackage>(args);
-        auto user_pkg_with_aux = withAuxKernels(user_pkg.value_or(cv::gapi::GKernelPackage{}));
-        return combine(ocv_pkg, user_pkg_with_aux);
+        auto user_pkg = cv::gapi::getCompileArg<cv::GKernelPackage>(args);
+        auto user_pkg_with_aux = withAuxKernels(user_pkg.value_or(cv::GKernelPackage{}));
+        return cv::gapi::combine(ocv_pkg, user_pkg_with_aux);
     }
 
     cv::gapi::GNetPackage getNetworkPackage(cv::GCompileArgs &args)
@@ -110,8 +111,8 @@ namespace
     }
 
     template<typename C>
-    cv::gapi::GKernelPackage auxKernelsFrom(const C& c) {
-        cv::gapi::GKernelPackage result;
+    cv::GKernelPackage auxKernelsFrom(const C& c) {
+        cv::GKernelPackage result;
         for (const auto &b : c) {
             result = cv::gapi::combine(result, b.priv().auxiliaryKernels());
         }
@@ -121,7 +122,7 @@ namespace
     using adeGraphs = std::vector<std::unique_ptr<ade::Graph>>;
 
     // Creates ADE graphs (patterns and substitutes) from pkg's transformations
-    void makeTransformationGraphs(const cv::gapi::GKernelPackage& pkg,
+    void makeTransformationGraphs(const cv::GKernelPackage& pkg,
                                   adeGraphs& patterns,
                                   adeGraphs& substitutes) {
         const auto& transforms = pkg.get_transformations();
@@ -142,7 +143,7 @@ namespace
         }
     }
 
-    void checkTransformations(const cv::gapi::GKernelPackage& pkg,
+    void checkTransformations(const cv::GKernelPackage& pkg,
                               const adeGraphs& patterns,
                               const adeGraphs& substitutes) {
         const auto& transforms = pkg.get_transformations();
@@ -338,7 +339,7 @@ void cv::gimpl::GCompiler::validateInputMeta()
             return util::holds_alternative<cv::GOpaqueDesc>(meta);
 
         default:
-            GAPI_Assert(false);
+            GAPI_Error("InternalError");
         }
         return false; // should never happen
     };
@@ -452,8 +453,16 @@ cv::GCompiled cv::gimpl::GCompiler::produceCompiled(GPtr &&pg)
         .get<OutputMeta>().outMeta;
     // FIXME: select which executor will be actually used,
     // make GExecutor abstract.
-    std::unique_ptr<GExecutor> pE(new GExecutor(std::move(pg)));
 
+    auto use_threaded_exec = cv::gapi::getCompileArg<cv::use_threaded_executor>(m_args);
+    std::unique_ptr<GAbstractExecutor> pE;
+    if (use_threaded_exec) {
+        const auto num_threads = use_threaded_exec.value().num_threads;
+        GAPI_LOG_INFO(NULL, "Threaded executor with " << num_threads << " thread(s) will be used");
+        pE.reset(new GThreadedExecutor(num_threads, std::move(pg)));
+    } else {
+        pE.reset(new GExecutor(std::move(pg)));
+    }
     GCompiled compiled;
     compiled.priv().setup(m_metas, outMetas, std::move(pE));
 
@@ -485,7 +494,7 @@ cv::GStreamingCompiled cv::gimpl::GCompiler::produceStreamingCompiled(GPtr &&pg)
         // Otherwise, set it up with executor object only
         compiled.priv().setup(std::move(pE));
     }
-    else GAPI_Assert(false && "Impossible happened -- please report a bug");
+    else GAPI_Error("Impossible happened -- please report a bug");
     return compiled;
 }
 

@@ -2,9 +2,9 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 //
-// Copyright (C) 2020 Intel Corporation
+// Copyright (C) 2020-2024 Intel Corporation
 
-#ifdef HAVE_INF_ENGINE
+#if defined HAVE_INF_ENGINE && INF_ENGINE_RELEASE < 2023010000
 
 #include <vector>
 #include <string>
@@ -17,6 +17,8 @@
 
 #include <opencv2/core/utility.hpp>
 #include <opencv2/core/utils/logger.hpp>
+
+#include <opencv2/core/utils/configuration.private.hpp>
 
 namespace IE = InferenceEngine;
 namespace giewrap = cv::gimpl::ie::wrap;
@@ -93,9 +95,36 @@ IE::InferencePlugin giewrap::getPlugin(const GIEParam& params) {
     return plugin;
 }
 #else // >= 2019.R2
-IE::Core giewrap::getCore() {
+
+// NB: Some of IE plugins fail during IE::Core destroying in specific cases.
+// Solution is allocate IE::Core in heap and doesn't destroy it, which cause
+// leak, but fixes tests on CI. This behaviour is configurable by using
+// OPENCV_GAPI_INFERENCE_ENGINE_CORE_LIFETIME_WORKAROUND=0
+static IE::Core create_IE_Core_pointer() {
+    // NB: 'delete' is never called
+    static IE::Core* core = new IE::Core();
+    return *core;
+}
+
+static IE::Core create_IE_Core_instance() {
     static IE::Core core;
     return core;
+}
+
+IE::Core giewrap::getCore() {
+    // NB: to make happy memory leak tools use:
+    // - OPENCV_GAPI_INFERENCE_ENGINE_CORE_LIFETIME_WORKAROUND=0
+    static bool param_GAPI_INFERENCE_ENGINE_CORE_LIFETIME_WORKAROUND =
+        utils::getConfigurationParameterBool(
+                "OPENCV_GAPI_INFERENCE_ENGINE_CORE_LIFETIME_WORKAROUND",
+#if defined(_WIN32) || defined(__APPLE__)
+                true
+#else
+                false
+#endif
+                );
+    return param_GAPI_INFERENCE_ENGINE_CORE_LIFETIME_WORKAROUND
+        ? create_IE_Core_pointer() : create_IE_Core_instance();
 }
 
 IE::Core giewrap::getPlugin(const GIEParam& params) {

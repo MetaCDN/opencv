@@ -68,11 +68,6 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
-if (typeof module !== 'undefined' && module.exports) {
-    // The environment is Node.js
-    var cv = require('./opencv.js'); // eslint-disable-line no-var
-}
-
 QUnit.module('Image Processing', {});
 
 QUnit.test('test_imgProc', function(assert) {
@@ -948,7 +943,7 @@ QUnit.test('test_filter', function(assert) {
 
         cv.rotate(src, dst, cv.ROTATE_90_CLOCKWISE);
 
-        size = dst.size();
+        let size = dst.size();
         assert.equal(size.height, 2, "ROTATE_HEIGHT");
         assert.equal(size.width, 3, "ROTATE_WIGTH");
 

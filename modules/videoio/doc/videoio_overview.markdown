@@ -1,12 +1,14 @@
 Video I/O with OpenCV Overview {#videoio_overview}
-===================================
+==============================
 
-### See also:
+@tableofcontents
+
+@sa
   - @ref videoio "Video I/O Code Reference"
   - Tutorials: @ref tutorial_table_of_content_app
 
 General Information
-===================
+-------------------
 
 The OpenCV @ref videoio module is a set of classes and functions to read and write video or images sequence.
 
@@ -32,32 +34,32 @@ Select the backend at runtime
 
 OpenCV automatically selects and uses first available backend (`apiPreference=cv::CAP_ANY`).
 
-As advanced usage you can select the backend to use at runtime. Currently this option is
-available only with %VideoCapture.
+As advanced usage you can select the backend to use at runtime.
 
-For example to grab from default camera using Direct Show as backend
-
-```cpp
-//declare a capture object
-cv::VideoCapture cap(0, cv::CAP_DSHOW);
-
-//or specify the apiPreference with open
-cap.open(0, cv::CAP_DSHOW);
-```
-
-If you want to grab from a file using the Direct Show as backend:
+For example to grab from default camera using Microsoft Media Foundation (MSMF) as backend
 
 ```cpp
 //declare a capture object
-cv::VideoCapture cap(filename, cv::CAP_DSHOW);
+cv::VideoCapture cap(0, cv::CAP_MSMF);
 
 //or specify the apiPreference with open
-cap.open(filename, cv::CAP_DSHOW);
+cap.open(0, cv::CAP_MSMF);
 ```
 
+If you want to grab from a file using the Microsoft Media Foundation (MSMF) as backend:
+
+```cpp
+//declare a capture object
+cv::VideoCapture cap(filename, cv::CAP_MSMF);
+
+//or specify the apiPreference with open
+cap.open(filename, cv::CAP_MSMF);
+```
 @sa cv::VideoCapture::open() , cv::VideoCapture::VideoCapture()
 
-#### How to enable backends
+
+How to enable backends
+----------------------
 
 There are two kinds of videoio backends: built-in backends and plugins which will be loaded at runtime (since OpenCV 4.1.0). Use functions cv::videoio_registry::getBackends, cv::videoio_registry::hasBackend and cv::videoio_registry::getBackendName to check actual presence of backend during runtime.
 
@@ -72,7 +74,9 @@ To enable dynamically-loaded videoio backend (currently supported: GStreamer and
 
 @note Don't forget to clean CMake cache when switching between these two modes
 
-#### Use 3rd party drivers or cameras
+
+Use 3rd party drivers or cameras
+--------------------------------
 
 Many industrial cameras or some video I/O devices don't provide standard driver interfaces
 for the operating system. Thus you can't use  VideoCapture or VideoWriter with these devices.
@@ -83,6 +87,7 @@ include and link with your OpenCV application.
 It is a common case that these libraries read/write images from/to a memory buffer. If it so, it is
 possible to make a `Mat` header for memory buffer (user-allocated data) and process it
 in-place using OpenCV functions. See cv::Mat::Mat() for more details.
+
 
 The FFmpeg library
 ------------------

@@ -54,6 +54,7 @@
 #define icvReleaseCapture_FFMPEG_p cvReleaseCapture_FFMPEG
 #define icvGrabFrame_FFMPEG_p cvGrabFrame_FFMPEG
 #define icvRetrieveFrame_FFMPEG_p cvRetrieveFrame_FFMPEG
+#define icvRetrieveFrame2_FFMPEG_p cvRetrieveFrame2_FFMPEG
 #define icvSetCaptureProperty_FFMPEG_p cvSetCaptureProperty_FFMPEG
 #define icvGetCaptureProperty_FFMPEG_p cvGetCaptureProperty_FFMPEG
 #define icvCreateVideoWriter_FFMPEG_p cvCreateVideoWriter_FFMPEG
@@ -64,7 +65,7 @@
 namespace cv {
 namespace {
 
-class CvCapture_FFMPEG_proxy CV_FINAL : public cv::IVideoCapture
+class CvCapture_FFMPEG_proxy CV_FINAL : public cv::VideoCaptureBase
 {
 public:
     CvCapture_FFMPEG_proxy() { ffmpegCapture = 0; }
@@ -75,11 +76,11 @@ public:
     }
     virtual ~CvCapture_FFMPEG_proxy() { close(); }
 
-    virtual double getProperty(int propId) const CV_OVERRIDE
+    virtual double getProperty_(int propId) const CV_OVERRIDE
     {
         return ffmpegCapture ? icvGetCaptureProperty_FFMPEG_p(ffmpegCapture, propId) : 0;
     }
-    virtual bool setProperty(int propId, double value) CV_OVERRIDE
+    virtual bool setProperty_(int propId, double value) CV_OVERRIDE
     {
         return ffmpegCapture ? icvSetCaptureProperty_FFMPEG_p(ffmpegCapture, propId, value)!=0 : false;
     }
@@ -87,10 +88,10 @@ public:
     {
         return ffmpegCapture ? icvGrabFrame_FFMPEG_p(ffmpegCapture)!=0 : false;
     }
-    virtual bool retrieveFrame(int, cv::OutputArray frame) CV_OVERRIDE
+    virtual bool retrieveFrame_(int flag, cv::OutputArray frame) CV_OVERRIDE
     {
         unsigned char* data = 0;
-        int step=0, width=0, height=0, cn=0;
+        int step=0, width=0, height=0, cn=0, depth=0;
 
         if (!ffmpegCapture)
             return false;
@@ -102,13 +103,16 @@ public:
             }
         }
 
-        if (!icvRetrieveFrame_FFMPEG_p(ffmpegCapture, &data, &step, &width, &height, &cn))
-            return false;
+        if (flag == 0) {
+            if (!icvRetrieveFrame2_FFMPEG_p(ffmpegCapture, &data, &step, &width, &height, &cn, &depth))
+                return false;
+        }
+        else {
+            if (!ffmpegCapture->retrieveFrame(flag, &data, &step, &width, &height, &cn, &depth))
+                return false;
+        }
 
-        cv::Mat tmp(height, width, CV_MAKETYPE(CV_8U, cn), data, step);
-        this->rotateFrame(tmp);
-        tmp.copyTo(frame);
-
+        cv::Mat(height, width, CV_MAKETYPE(depth, cn), data, step).copyTo(frame);
         return true;
     }
     bool open(const cv::String& filename, const cv::VideoCaptureParameters& params)
@@ -127,34 +131,10 @@ public:
     }
 
     virtual bool isOpened() const CV_OVERRIDE { return ffmpegCapture != 0; }
-    virtual int getCaptureDomain() CV_OVERRIDE { return CV_CAP_FFMPEG; }
+    virtual int getCaptureDomain() CV_OVERRIDE { return cv::CAP_FFMPEG; }
 
 protected:
     CvCapture_FFMPEG* ffmpegCapture;
-
-    void rotateFrame(cv::Mat &mat) const
-    {
-        bool rotation_auto = 0 != getProperty(CAP_PROP_ORIENTATION_AUTO);
-        int rotation_angle = static_cast<int>(getProperty(CAP_PROP_ORIENTATION_META));
-
-        if(!rotation_auto || rotation_angle%360 == 0)
-        {
-            return;
-        }
-
-        cv::RotateFlags flag;
-        if(rotation_angle == 90 || rotation_angle == -270) { // Rotate clockwise 90 degrees
-            flag = cv::ROTATE_90_CLOCKWISE;
-        } else if(rotation_angle == 270 || rotation_angle == -90) { // Rotate clockwise 270 degrees
-            flag = cv::ROTATE_90_COUNTERCLOCKWISE;
-        } else if(rotation_angle == 180 || rotation_angle == -180) { // Rotate clockwise 180 degrees
-            flag = cv::ROTATE_180;
-        } else { // Unsupported rotation
-            return;
-        }
-
-        cv::rotate(mat, mat, flag);
-    }
 };
 
 } // namespace
@@ -183,7 +163,7 @@ public:
     {
         if(!ffmpegWriter)
             return;
-        CV_Assert(image.depth() == CV_8U);
+        CV_Assert(image.depth() == CV_8U || image.depth() == CV_16U);
 
         // if UMat, try GPU to GPU copy using OpenCL extensions
         if (image.isUMat()) {
@@ -215,7 +195,11 @@ public:
         return ffmpegWriter->getProperty(propId);
     }
 
-    virtual bool setProperty(int, double) CV_OVERRIDE { return false; }
+    virtual bool setProperty(int propId, double value) CV_OVERRIDE {
+        if (!ffmpegWriter)
+            return 0;
+        return ffmpegWriter->setProperty(propId, value);
+    }
     virtual bool isOpened() const CV_OVERRIDE { return ffmpegWriter != 0; }
 
 protected:
